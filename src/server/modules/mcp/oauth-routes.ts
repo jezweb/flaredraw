@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { eq, and } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/d1'
 import { hashToken } from '../../middleware/auth'
-import { mcpOAuthClients, mcpOAuthCodes, mcpOAuthTokens, users } from '../../db/schema'
+import { mcpOAuthClients, mcpOAuthCodes, mcpOAuthTokens, users, accounts } from '../../db/schema'
 
 type Bindings = {
   DB: D1Database
@@ -233,23 +233,42 @@ oauthRoutes.get('/callback', async (c) => {
     return c.text('Failed to get user info from Google', 500)
   }
 
-  const googleUser = await userInfoRes.json<{ email: string; name: string }>()
+  const googleUser = await userInfoRes.json<{ email: string; name: string; picture?: string }>()
 
-  // Find user in our database — must already exist
-  const [user] = await db
+  // Find or create user
+  let [user] = await db
     .select({ id: users.id })
     .from(users)
     .where(eq(users.email, googleUser.email))
     .limit(1)
 
   if (!user) {
-    // User hasn't signed up to FlareDraw yet — redirect with error
-    const url = new URL(pending.redirectUri)
-    url.searchParams.set('error', 'access_denied')
-    url.searchParams.set('error_description', 'No FlareDraw account found. Sign in at draw.flared.au first.')
-    if (pending.clientState) url.searchParams.set('state', pending.clientState)
-    await db.delete(mcpOAuthCodes).where(eq(mcpOAuthCodes.code, nonce))
-    return c.redirect(url.toString())
+    // Auto-create account for new users coming through MCP OAuth
+    const userId = randomString(16)
+    const accountId = randomString(16)
+    const now = new Date().toISOString()
+
+    await db.insert(users).values({
+      id: userId,
+      name: googleUser.name || googleUser.email.split('@')[0],
+      email: googleUser.email,
+      emailVerified: true,
+      image: googleUser.picture || null,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    await db.insert(accounts).values({
+      id: accountId,
+      accountId: googleUser.email,
+      providerId: 'google',
+      userId,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    user = { id: userId }
+    console.log(JSON.stringify({ event: 'mcp_oauth_user_created', email: googleUser.email, userId }))
   }
 
   // Generate our own authorization code

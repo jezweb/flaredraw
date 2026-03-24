@@ -123,5 +123,5 @@ src/
 
 ## Build Journal
 
-Documenting the build experience at `.claude/artifacts/build-journal.md` for future blog/newsletter.
-Screenshots go to `.claude/screenshots/`.
+Documenting the build experience at `.jez/artifacts/build-journal.md` for future blog/newsletter.
+Screenshots go to `.jez/screenshots/`.
