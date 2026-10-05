@@ -1,4 +1,4 @@
-# FlareDraw — CLAUDE.md
+# FlareDraw: CLAUDE.md
 
 Excalidraw on Cloudflare. Uses `@excalidraw/excalidraw` npm package (not a full fork).
 
@@ -27,18 +27,18 @@ pnpm db:migrate:remote # Apply migrations to production D1
 - Import Excalidraw CSS before Tailwind to avoid style conflicts
 - `window.EXCALIDRAW_ASSET_PATH = '/fonts/'` must be set before component mounts (in index.html)
 - Use `getSceneVersion()` to debounce onChange (fires on every cursor move)
-- Store `serializeAsJSON()` output directly in R2 — standard .excalidraw format
+- Store `serializeAsJSON()` output directly in R2: standard .excalidraw format
 - Login redirect: `window.location.href`, not `navigate()` (SPA race condition)
-- `run_worker_first` in wrangler.jsonc must include ALL non-asset Worker routes — not just `/api/*`. OAuth (`/.well-known/*`, `/oauth/*`) and any future server routes need explicit entries or the SPA fallback serves `index.html`.
+- `run_worker_first` in wrangler.jsonc must include ALL non-asset Worker routes, not just `/api/*`. OAuth (`/.well-known/*`, `/oauth/*`) and any future server routes need explicit entries or the SPA fallback serves `index.html`.
 
 ## Auth
 
 Three authentication methods:
 - **Web UI**: Google OAuth via better-auth session cookies
 - **API tokens**: Bearer token auth with `fd_` prefixed tokens (SHA-256 hashed in D1)
-- **MCP OAuth 2.1**: Full OAuth flow for Claude AI — discovery, dynamic client registration, PKCE, Google OAuth proxy. Tokens stored as SHA-256 hashes in `mcp_oauth_tokens` table.
+- **MCP OAuth 2.1**: Full OAuth flow for Claude AI: discovery, dynamic client registration, PKCE, Google OAuth proxy. Tokens stored as SHA-256 hashes in `mcp_oauth_tokens` table.
 
-Dual-auth middleware in `src/server/middleware/auth.ts` supports all three methods. Token management (Settings page) is session-only — can't manage tokens via tokens.
+Dual-auth middleware in `src/server/middleware/auth.ts` supports all three methods. Token management (Settings page) is session-only: can't manage tokens via tokens.
 
 ## API Endpoints
 
@@ -74,9 +74,9 @@ Streamable HTTP at `/api/mcp/message`. Stateless mode (fresh server per request,
 
 **Tools**: read_guide, list_drawings, get_drawing, create_drawing, update_drawing, delete_drawing, share_drawing, create_diagram
 
-**Resources**: `excalidraw://guide/elements` — element sizing guide (also available as `read_guide` tool since not all MCP clients support resources)
+**Resources**: `excalidraw://guide/elements`: element sizing guide (also available as `read_guide` tool since not all MCP clients support resources)
 
-**Config — OAuth (recommended, for Claude AI)**:
+**Config, OAuth (recommended, for Claude AI)**:
 ```json
 {
   "mcpServers": {
@@ -87,7 +87,7 @@ Streamable HTTP at `/api/mcp/message`. Stateless mode (fresh server per request,
 }
 ```
 
-**Config — Bearer token (for scripts/automation)**:
+**Config, Bearer token (for scripts/automation)**:
 ```json
 {
   "mcpServers": {
