@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, type Drawing } from '@/client/lib/api-client'
 import { signOut } from '@/client/lib/auth'
 import { useThemeContext } from '@/client/components/ThemeProvider'
+import { clearRenameUiForCompletedSave, type RenameDraft, type RenameError } from '@/client/pages/dashboardRenameState'
 
 const themeIcons: Record<string, string> = {
   light: '\u2600\uFE0F',  // sun
@@ -10,11 +11,34 @@ const themeIcons: Record<string, string> = {
   system: '\uD83D\uDCBB',  // laptop
 }
 
+function sortDrawingsByLastModified(items: Drawing[]) {
+  return [...items].sort((a, b) => {
+    const aTime = Date.parse(a.lastModified ?? '') || 0
+    const bTime = Date.parse(b.lastModified ?? '') || 0
+    return bTime - aTime
+  })
+}
+
+function getDrawingTitle(drawing: Drawing) {
+  return drawing.title?.trim() || 'Untitled'
+}
+
 export function DashboardPage() {
   const [drawings, setDrawings] = useState<Drawing[]>([])
   const [loading, setLoading] = useState(true)
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [renameSavingId, setRenameSavingId] = useState<string | null>(null)
+  const [renameError, setRenameError] = useState<RenameError | null>(null)
   const navigate = useNavigate()
   const { theme, cycleTheme } = useThemeContext()
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const renameInputRef = useRef<HTMLInputElement | null>(null)
+  const renameSubmittingIdRef = useRef<string | null>(null)
+  const renameBlurIgnoreIdRef = useRef<string | null>(null)
+  const renameDraftRef = useRef<RenameDraft | null>(null)
+  const renameErrorRef = useRef<RenameError | null>(null)
 
   useEffect(() => {
     api.drawings.list().then((data) => {
@@ -23,15 +47,122 @@ export function DashboardPage() {
     })
   }, [])
 
+  useEffect(() => {
+    if (renamingId && renameInputRef.current) {
+      renameInputRef.current.focus()
+      renameInputRef.current.select()
+    }
+  }, [renamingId])
+
+  useEffect(() => {
+    renameDraftRef.current = renamingId ? { drawingId: renamingId, value: renameValue } : null
+  }, [renamingId, renameValue])
+
+  useEffect(() => {
+    renameErrorRef.current = renameError
+  }, [renameError])
+
+  useEffect(() => {
+    if (!menuOpenId) return
+
+    function handlePointerDown(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpenId(null)
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setMenuOpenId(null)
+      }
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [menuOpenId])
+
   async function handleNew() {
     const { id } = await api.drawings.create()
     navigate(`/draw/${id}`)
   }
 
   async function handleDelete(id: string) {
+    setMenuOpenId(null)
     if (!confirm('Delete this drawing?')) return
     await api.drawings.delete(id)
     setDrawings((prev) => prev.filter((d) => d.id !== id))
+  }
+
+  function startRenaming(drawing: Drawing) {
+    setMenuOpenId(null)
+    setRenameError((prev) => (prev?.id === drawing.id ? null : prev))
+    setRenamingId(drawing.id)
+    setRenameValue(getDrawingTitle(drawing))
+  }
+
+  function cancelRenaming(options?: { ignoreBlurForId?: string }) {
+    if (options?.ignoreBlurForId) {
+      renameBlurIgnoreIdRef.current = options.ignoreBlurForId
+    }
+    setRenamingId(null)
+    setRenameValue('')
+    setRenameError(null)
+  }
+
+  async function submitRename(drawing: Drawing) {
+    if (renameBlurIgnoreIdRef.current === drawing.id) {
+      renameBlurIgnoreIdRef.current = null
+      return
+    }
+
+    if (renameSubmittingIdRef.current === drawing.id) return
+
+    const currentTitle = getDrawingTitle(drawing)
+    const title = renameValue.trim() || 'Untitled'
+
+    if (title === currentTitle) {
+      cancelRenaming()
+      return
+    }
+
+    renameSubmittingIdRef.current = drawing.id
+    setRenameSavingId(drawing.id)
+    setRenameError(null)
+
+    try {
+      await api.drawings.updateTitle(drawing.id, title)
+      const lastModified = new Date().toISOString()
+      setDrawings((prev) =>
+        sortDrawingsByLastModified(
+          prev.map((item) => (item.id === drawing.id ? { ...item, title, lastModified } : item))
+        )
+      )
+      const nextRenameUi = clearRenameUiForCompletedSave(
+        renameDraftRef.current,
+        renameErrorRef.current,
+        drawing.id
+      )
+      setRenamingId(nextRenameUi.draft?.drawingId ?? null)
+      setRenameValue(nextRenameUi.draft?.value ?? '')
+      setRenameError(nextRenameUi.error)
+    } catch (error) {
+      setRenameError({
+        id: drawing.id,
+        message: error instanceof Error ? error.message : 'Failed to rename drawing',
+      })
+      requestAnimationFrame(() => {
+        renameInputRef.current?.focus()
+        renameInputRef.current?.select()
+      })
+    } finally {
+      renameSubmittingIdRef.current = null
+      setRenameSavingId((current) => (current === drawing.id ? null : current))
+    }
   }
 
   function handleLogout() {
@@ -108,7 +239,10 @@ export function DashboardPage() {
               <div
                 key={drawing.id}
                 className="group cursor-pointer rounded-lg border border-zinc-200 bg-white p-4 transition-shadow hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900"
-                onClick={() => navigate(`/draw/${drawing.id}`)}
+                onClick={() => {
+                  if (renamingId === drawing.id || renameSavingId === drawing.id) return
+                  navigate(`/draw/${drawing.id}`)
+                }}
               >
                 {/* Placeholder for thumbnail */}
                 <div className="mb-3 flex h-32 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
@@ -117,26 +251,106 @@ export function DashboardPage() {
                   </span>
                 </div>
                 <div className="flex items-start justify-between">
-                  <div className="min-w-0">
-                    <h3 className="truncate font-medium text-zinc-900 dark:text-zinc-100">
-                      {drawing.title || 'Untitled'}
-                    </h3>
-                    <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                      {formatDate(drawing.lastModified)}
-                    </p>
-                  </div>
-                  <button
+                  <div
+                    className="min-w-0 flex-1"
                     onClick={(e) => {
-                      e.stopPropagation()
-                      handleDelete(drawing.id)
+                      if (renamingId === drawing.id) {
+                        e.stopPropagation()
+                      }
                     }}
-                    className="ml-2 rounded p-1 text-zinc-400 opacity-0 transition-opacity hover:text-red-500 group-hover:opacity-100"
-                    title="Delete drawing"
                   >
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
+                    {renamingId === drawing.id ? (
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          ref={renameInputRef}
+                          value={renameValue}
+                          onChange={(e) => {
+                            setRenameValue(e.target.value)
+                            setRenameError((prev) => (prev?.id === drawing.id ? null : prev))
+                          }}
+                          onBlur={() => {
+                            void submitRename(drawing)
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              void submitRename(drawing)
+                            }
+                            if (e.key === 'Escape') {
+                              e.preventDefault()
+                              cancelRenaming({ ignoreBlurForId: drawing.id })
+                            }
+                          }}
+                          disabled={renameSavingId === drawing.id}
+                          className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm font-medium text-zinc-900 outline-none ring-0 transition focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-zinc-500"
+                          aria-label="Drawing title"
+                        />
+                        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                          {renameSavingId === drawing.id ? 'Saving...' : 'Enter to save, Esc to cancel'}
+                        </p>
+                        {renameError?.id === drawing.id ? (
+                          <p className="mt-1 text-xs text-red-500 dark:text-red-400">
+                            {renameError.message}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <>
+                        <h3 className="truncate font-medium text-zinc-900 dark:text-zinc-100">
+                          {getDrawingTitle(drawing)}
+                        </h3>
+                        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                          {formatDate(drawing.lastModified)}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                  <div
+                    className="relative ml-2"
+                    ref={menuOpenId === drawing.id ? menuRef : null}
+                  >
+                    <button
+                      disabled={renamingId === drawing.id || renameSavingId === drawing.id}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setMenuOpenId((prev) => (prev === drawing.id ? null : drawing.id))
+                      }}
+                      className="rounded p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
+                      title="Drawing actions"
+                    >
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <circle cx="12" cy="5" r="1.75" />
+                        <circle cx="12" cy="12" r="1.75" />
+                        <circle cx="12" cy="19" r="1.75" />
+                      </svg>
+                    </button>
+                    {menuOpenId === drawing.id ? (
+                      <div
+                        className="absolute right-0 top-8 z-10 w-32 rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          onClick={() => {
+                            startRenaming(drawing)
+                          }}
+                          className="block w-full px-3 py-2 text-left text-sm text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                        >
+                          Rename
+                        </button>
+                        <button
+                          onClick={() => {
+                            void handleDelete(drawing.id)
+                          }}
+                          className="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             ))}
